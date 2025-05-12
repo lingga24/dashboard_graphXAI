@@ -10,7 +10,7 @@ decorator==4.4.2
 executing==2.1.0
 googledrivedownloader==1.1.0
 graphlime==1.2.0
-graphxai==0.1
+git+https://github.com/mims-harvard/GraphXAI.git
 idna==3.10
 importlib_metadata==8.5.0
 ipdb==0.13.13
