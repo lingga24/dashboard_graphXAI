@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+import torch.nn.functional as F
 from sklearn.utils.class_weight import compute_class_weight
 from torch_geometric.utils import k_hop_subgraph
 from torch_geometric.data import Data
@@ -20,105 +21,378 @@ from graphxai.gnn_models.node_classification import train, test
 # Page config
 st.set_page_config(
     page_title="GraphXAI Explainer Dashboard",
-    page_icon="🔍",
+    page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Enhanced CSS for professional UI
 st.markdown("""
 <style>
     .main-header {
-        font-size: 3rem;
+        font-size: 3.5rem;
         font-weight: bold;
         text-align: center;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 2rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
     }
     
     .metric-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem;
-        border-radius: 10px;
+        padding: 1.5rem;
+        border-radius: 15px;
         color: white;
         text-align: center;
         margin: 0.5rem 0;
+        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 12px 40px rgba(102, 126, 234, 0.4);
     }
     
     .section-header {
-        font-size: 1.5rem;
+        font-size: 2rem;
         font-weight: bold;
-        color: #667eea;
-        margin: 1rem 0;
-        border-bottom: 2px solid #667eea;
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin: 2rem 0 1rem 0;
+        border-bottom: 3px solid transparent;
+        border-image: linear-gradient(90deg, #667eea 0%, #764ba2 100%) 1;
         padding-bottom: 0.5rem;
+        text-align: center;
     }
     
     .info-box {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 10px;
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
         border-left: 5px solid #667eea;
         margin: 1rem 0;
+        box-shadow: 0 4px 20px rgba(102, 126, 234, 0.1);
+        backdrop-filter: blur(10px);
+    }
+    
+    .success-box {
+        background: linear-gradient(135deg, rgba(40, 167, 69, 0.1) 0%, rgba(76, 175, 80, 0.1) 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        border-left: 5px solid #28a745;
+        margin: 1rem 0;
+        box-shadow: 0 4px 20px rgba(40, 167, 69, 0.1);
+        backdrop-filter: blur(10px);
     }
     
     .warning-box {
-        background-color: #fff3cd;
-        padding: 1rem;
-        border-radius: 10px;
+        background: linear-gradient(135deg, rgba(255, 193, 7, 0.1) 0%, rgba(255, 152, 0, 0.1) 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
         border-left: 5px solid #ffc107;
         margin: 1rem 0;
+        box-shadow: 0 4px 20px rgba(255, 193, 7, 0.1);
+        backdrop-filter: blur(10px);
+    }
+    
+    .error-box {
+        background: linear-gradient(135deg, rgba(220, 53, 69, 0.1) 0%, rgba(255, 87, 87, 0.1) 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        border-left: 5px solid #dc3545;
+        margin: 1rem 0;
+        box-shadow: 0 4px 20px rgba(220, 53, 69, 0.1);
+        backdrop-filter: blur(10px);
+    }
+    
+    .explainer-status {
+        display: inline-block;
+        padding: 0.3rem 0.8rem;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        font-weight: bold;
+        margin: 0.2rem;
+    }
+    
+    .status-success {
+        background: linear-gradient(135deg, #28a745 0%, #4caf50 100%);
+        color: white;
+    }
+    
+    .status-error {
+        background: linear-gradient(135deg, #dc3545 0%, #f44336 100%);
+        color: white;
+    }
+    
+    .status-running {
+        background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+        color: white;
+    }
+    
+    .progress-container {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 25px;
+        padding: 0.5rem;
+        margin: 1rem 0;
+        backdrop-filter: blur(10px);
+    }
+    
+    .highlight-text {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: bold;
+    }
+    
+    .dataset-info {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+        padding: 1rem;
+        border-radius: 15px;
+        margin: 1rem 0;
+        border: 1px solid rgba(102, 126, 234, 0.2);
+    }
+    
+    .analysis-box {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        border-left: 5px solid #4CAF50;
+        margin: 1rem 0;
+        box-shadow: 0 4px 20px rgba(76, 175, 80, 0.1);
     }
 </style>
 """, unsafe_allow_html=True)
 
 # Title
-st.markdown('<h1 class="main-header">🔍 GraphXAI Explainer Dashboard</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-header">GraphXAI Explainer Dashboard</h1>', unsafe_allow_html=True)
 
-# Sidebar for configuration
-st.sidebar.markdown("## 🛠️ Configuration")
+# Sidebar
+st.sidebar.markdown("## Configuration Panel")
 
 # Dataset parameters
 st.sidebar.markdown("### Dataset Parameters")
-model_layers = st.sidebar.slider("Model Layers", 2, 5, 3)
-num_subgraphs = st.sidebar.slider("Number of Subgraphs", 4, 16, 8)
-subgraph_size = st.sidebar.slider("Subgraph Size", 3, 10, 5)
-prob_connection = st.sidebar.slider("Connection Probability", 0.1, 0.9, 0.3)
+model_layers = st.sidebar.slider("Model Layers", 2, 5, 3, help="Number of layers in the GNN model")
+num_subgraphs = st.sidebar.slider("Number of Subgraphs", 4, 16, 8, help="Number of subgraphs to generate")
+subgraph_size = st.sidebar.slider("Subgraph Size", 3, 10, 5, help="Size of each subgraph")
+prob_connection = st.sidebar.slider("Connection Probability", 0.1, 0.9, 0.3, help="Probability of edge connections")
 
 # Model parameters
 st.sidebar.markdown("### Model Parameters")
-model_choice = st.sidebar.selectbox("Model Type", ['GCN', 'GIN', 'GAT', 'GSAGE'])
-hidden_channels = st.sidebar.slider("Hidden Channels", 16, 128, 32)
-learning_rate = st.sidebar.slider("Learning Rate", 0.0001, 0.01, 0.001, format="%.4f")
-epochs = st.sidebar.slider("Training Epochs", 50, 500, 300)
+model_choice = st.sidebar.selectbox("Model Architecture", ['GCN', 'GIN', 'GAT', 'GSAGE'], index=0,
+                                   help="Choose the GNN architecture")
+hidden_channels = st.sidebar.slider("Hidden Channels", 16, 128, 32, help="Number of hidden channels")
+learning_rate = st.sidebar.slider("Learning Rate", 0.0001, 0.01, 0.001, format="%.4f",
+                                  help="Learning rate for training")
+epochs = st.sidebar.slider("Training Epochs", 50, 500, 300, help="Number of training epochs")
 
 # Explanation parameters
 st.sidebar.markdown("### Explanation Parameters")
-node_idx_input = st.sidebar.number_input("Node Index to Explain", 0, 100, 8)
-num_hops = st.sidebar.slider("Number of Hops", 1, 4, 2)
+node_idx_input = st.sidebar.number_input("Node Index to Explain", 0, 100, 8, 
+                                         help="Index of the node to generate explanations for")
+num_hops = st.sidebar.slider("Number of Hops", 1, 4, 2, help="Number of hops for subgraph extraction")
 
-# Explainer selection
-st.sidebar.markdown("### Explainer Selection")
-use_grad = st.sidebar.checkbox("GradExplainer", value=True)
-use_gnn = st.sidebar.checkbox("GNNExplainer", value=True)
-use_pgm = st.sidebar.checkbox("PGMExplainer", value=True)
-use_lime = st.sidebar.checkbox("GraphLIME", value=True)
+# Run button
+st.sidebar.markdown("---")
+run_analysis = st.sidebar.button("Run Complete Analysis", type="primary", 
+                                 help="Start the full analysis pipeline")
 
-# Generate/Run button
-run_analysis = st.sidebar.button("🚀 Run Analysis", type="primary")
+# SafeGraphLIME class
+class SafeGraphLIME(GraphLIME):
+    def get_explanation_node(self, node_idx, x, edge_index, *args, **kwargs):
+        self.model = self.model.to(x.device)
+        
+        try:
+            result = super().get_explanation_node(node_idx, x, edge_index, *args, **kwargs)
+            return result
+        except Exception as e:
+            try:
+                result = super().get_explanation_node(node_idx, edge_index, x, *args, **kwargs)
+                return result
+            except Exception as e2:
+                raise e2
 
-# Initialize session state
-if 'dataset_generated' not in st.session_state:
-    st.session_state.dataset_generated = False
-if 'model_trained' not in st.session_state:
-    st.session_state.model_trained = False
+# Convert to full explanation function
+def convert_to_full_explanation(exp, node_idx, subset, sub_edge_index, mapping, edge_mask, data):
+    full_node_imp = torch.zeros(data.num_nodes)
+    
+    if hasattr(exp, 'feature_imp') and exp.feature_imp is not None and exp.node_imp is None:
+        if hasattr(exp, 'node_idx'):
+            target_node = exp.node_idx
+            if isinstance(target_node, torch.Tensor):
+                target_node = target_node.item()
+            mean_imp = exp.feature_imp.mean().item()
+            full_node_imp[target_node] = mean_imp
+    else:
+        if exp.node_imp is not None:
+            for i, imp in enumerate(exp.node_imp):
+                if i < len(subset):
+                    full_node_imp[subset[i]] = imp
+    
+    full_exp = Explanation(
+        node_imp=full_node_imp,
+        node_idx=node_idx
+    )
+    
+    full_exp.enc_subgraph = EnclosingSubgraph(
+        nodes=subset,
+        edge_index=sub_edge_index,
+        inv=mapping,
+        edge_mask=edge_mask,
+        directed=False
+    )
+    
+    full_exp.node_reference = {}
+    for sub_idx, full_idx in enumerate(subset):
+        full_exp.node_reference[full_idx.item()] = sub_idx
+    
+    return full_exp
 
-# Helper functions
+# ExplanationCompat class
+class ExplanationCompat(Explanation):
+    def __init__(self, enc_subgraph=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.enc_subgraph = enc_subgraph
+
+# Helper function for visualization data
+def get_data_from_explanation(exp, full_data):
+    subset = exp.enc_subgraph.nodes
+    edge_index = exp.enc_subgraph.edge_index
+    return Data(
+        x=full_data.x[subset],
+        edge_index=edge_index,
+        y=full_data.y[subset]
+    )
+
+# Analysis functions
+def analyze_model_performance(metrics):
+    """Analyze model performance metrics"""
+    analysis = []
+    
+    # Performance assessment
+    if metrics['f1'] > 0.8:
+        f1_assessment = "Excellent F1 score indicates strong overall performance"
+    elif metrics['f1'] > 0.6:
+        f1_assessment = "Good F1 score shows reasonable balance between precision and recall"
+    else:
+        f1_assessment = "F1 score suggests room for improvement in model performance"
+    
+    if metrics['auroc'] > 0.8:
+        auroc_assessment = "High AUROC demonstrates excellent discriminative ability"
+    elif metrics['auroc'] > 0.7:
+        auroc_assessment = "Good AUROC shows adequate discriminative power"
+    else:
+        auroc_assessment = "AUROC indicates limited discriminative capability"
+    
+    analysis.extend([f1_assessment, auroc_assessment])
+    
+    # Model reliability
+    precision_recall_diff = abs(metrics['prec'] - metrics['rec'])
+    if precision_recall_diff < 0.1:
+        balance_assessment = "Well-balanced precision and recall indicate stable performance"
+    else:
+        if metrics['prec'] > metrics['rec']:
+            balance_assessment = "Higher precision suggests conservative predictions with fewer false positives"
+        else:
+            balance_assessment = "Higher recall indicates comprehensive detection with more false positives"
+    
+    analysis.append(balance_assessment)
+    
+    return analysis
+
+def analyze_explanation_metrics(combined_df):
+    """Analyze explanation quality metrics"""
+    analysis = []
+    
+    # GEA Analysis
+    gea_scores = combined_df['Graph Explanation Accuracy (GEA)'].values
+    avg_gea = np.mean(gea_scores)
+    std_gea = np.std(gea_scores)
+    
+    if avg_gea > 0.7:
+        gea_assessment = f"High average GEA ({avg_gea:.3f}) indicates explanations align well with ground truth"
+    elif avg_gea > 0.5:
+        gea_assessment = f"Moderate average GEA ({avg_gea:.3f}) shows reasonable explanation quality"
+    else:
+        gea_assessment = f"Low average GEA ({avg_gea:.3f}) suggests explanations may not accurately reflect true importance"
+    
+    if std_gea < 0.1:
+        consistency_assessment = f"Low variance ({std_gea:.3f}) indicates consistent explanation quality across methods"
+    else:
+        consistency_assessment = f"High variance ({std_gea:.3f}) shows significant differences in explanation quality between methods"
+    
+    # GEF Analysis
+    gef_scores = combined_df['Graph Explanation Faithfulness (GEF)'].values
+    avg_gef = np.mean(gef_scores)
+    
+    if avg_gef > 0.7:
+        gef_assessment = f"High average GEF ({avg_gef:.3f}) indicates explanations are faithful to model predictions"
+    elif avg_gef > 0.5:
+        gef_assessment = f"Moderate average GEF ({avg_gef:.3f}) shows acceptable faithfulness to model behavior"
+    else:
+        gef_assessment = f"Low average GEF ({avg_gef:.3f}) suggests explanations may not reflect actual model decision process"
+    
+    analysis.extend([gea_assessment, consistency_assessment, gef_assessment])
+    
+    # Method comparison
+    best_gea_method = combined_df.loc[combined_df['Graph Explanation Accuracy (GEA)'].idxmax(), 'Explainer']
+    best_gef_method = combined_df.loc[combined_df['Graph Explanation Faithfulness (GEF)'].idxmax(), 'Explainer']
+    
+    if best_gea_method == best_gef_method:
+        method_assessment = f"{best_gea_method} provides the most reliable explanations with both highest accuracy and faithfulness"
+    else:
+        method_assessment = f"{best_gea_method} provides most accurate explanations while {best_gef_method} provides most faithful explanations"
+    
+    analysis.append(method_assessment)
+    
+    return analysis
+
+def analyze_visualization_patterns(explanations, node_idx):
+    """Analyze patterns in explanation visualizations"""
+    analysis = []
+    
+    # Count successful explanations
+    successful_methods = []
+    if 'grad' in explanations:
+        successful_methods.append("GradExplainer")
+    if 'gnn' in explanations:
+        successful_methods.append("GNNExplainer") 
+    if 'pgm' in explanations:
+        successful_methods.append("PGMExplainer")
+    if 'lime' in explanations:
+        successful_methods.append("GraphLIME")
+    
+    coverage_assessment = f"Successfully generated explanations using {len(successful_methods)} out of 4 methods: {', '.join(successful_methods)}"
+    
+    # Node importance analysis
+    if 'grad' in explanations and 'gnn' in explanations:
+        if len(successful_methods) >= 3:
+            consensus_assessment = "Multiple explanation methods enable robust cross-validation of important node identification"
+        else:
+            consensus_assessment = "Limited explanation methods may reduce confidence in identified important nodes"
+    else:
+        consensus_assessment = "Insufficient explanation methods for comprehensive importance analysis"
+    
+    # Method diversity assessment
+    if len(successful_methods) == 4:
+        diversity_assessment = "Complete method coverage provides comprehensive perspective on node importance through gradient-based, perturbation-based, and probabilistic approaches"
+    elif len(successful_methods) >= 2:
+        diversity_assessment = "Partial method coverage provides limited but valuable insights into node importance patterns"
+    else:
+        diversity_assessment = "Single method provides isolated perspective on node importance"
+    
+    analysis.extend([coverage_assessment, consensus_assessment, diversity_assessment])
+    
+    return analysis
+
+# Cache functions
 @st.cache_data
 def generate_dataset(model_layers, num_subgraphs, subgraph_size, prob_connection):
-    """Generate ShapeGGen dataset"""
     try:
         dataset = ShapeGGen(
             model_layers=model_layers,
@@ -127,13 +401,16 @@ def generate_dataset(model_layers, num_subgraphs, subgraph_size, prob_connection
             prob_connection=prob_connection,
             add_sensitive_feature=False
         )
-        return dataset, None
+        
+        data = dataset.graph
+        explanation = dataset.explanations
+        
+        return dataset, data, explanation, None
     except Exception as e:
-        return None, str(e)
+        return None, None, None, str(e)
 
 @st.cache_resource
-def train_model(_dataset, model_choice, hidden_channels, learning_rate, epochs):
-    """Train the GNN model"""
+def train_model_and_init_explainers(_dataset, model_choice, hidden_channels, learning_rate, epochs):
     try:
         data = _dataset.get_graph(use_fixed_split=True)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -141,193 +418,101 @@ def train_model(_dataset, model_choice, hidden_channels, learning_rate, epochs):
         
         # Initialize model
         if model_choice == 'GCN':
-            model = GCN_3layer_basic(
-                hidden_channels=hidden_channels, 
-                input_feat=_dataset.n_features, 
-                classes=num_classes
-            ).to(device)
+            model = GCN_3layer_basic(hidden_channels=hidden_channels, input_feat=_dataset.n_features, classes=num_classes).to(device)
         elif model_choice == 'GIN':
-            model = GIN_3layer_basic(
-                hidden_channels=hidden_channels, 
-                input_feat=_dataset.n_features, 
-                classes=num_classes
-            ).to(device)
+            model = GIN_3layer_basic(hidden_channels=hidden_channels, input_feat=_dataset.n_features, classes=num_classes).to(device)
         elif model_choice == 'GAT':
-            model = GAT_3layer_basic(
-                hidden_channels=hidden_channels, 
-                input_feat=_dataset.n_features, 
-                classes=num_classes
-            ).to(device)
+            model = GAT_3layer_basic(hidden_channels=hidden_channels, input_feat=_dataset.n_features, classes=num_classes).to(device)
         elif model_choice == 'GSAGE':
-            model = GSAGE_3layer(
-                hidden_channels=hidden_channels, 
-                input_feat=_dataset.n_features, 
-                classes=num_classes
-            ).to(device)
+            model = GSAGE_3layer(hidden_channels=hidden_channels, input_feat=_dataset.n_features, classes=num_classes).to(device)
         
-        # Setup training
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0.001)
         
-        # Class weights for balanced training
-        class_weights = compute_class_weight(
-            'balanced', 
-            classes=np.unique(data.y.cpu()), 
-            y=data.y.cpu().numpy()
-        )
+        class_weights = compute_class_weight('balanced', classes=np.unique(data.y.cpu()), y=data.y.cpu().numpy())
         class_weights = torch.tensor(class_weights, dtype=torch.float).to(device)
         criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
         
         # Training loop with progress
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        progress_container = st.empty()
         
         for epoch in range(epochs):
             loss = train(model, optimizer, criterion, data)
             
-            # Update progress
             progress = (epoch + 1) / epochs
-            progress_bar.progress(progress)
-            status_text.text(f'Training Progress: {epoch+1}/{epochs} epochs - Loss: {loss:.4f}')
+            with progress_container.container():
+                st.markdown('<div class="progress-container">', unsafe_allow_html=True)
+                st.progress(progress)
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Epoch", f"{epoch+1}/{epochs}")
+                with col2:
+                    st.metric("Loss", f"{loss:.4f}")
+                with col3:
+                    st.metric("Progress", f"{progress*100:.1f}%")
+                st.markdown('</div>', unsafe_allow_html=True)
         
-        # Evaluate model
         f1, acc, prec, rec, auprc, auroc = test(model, data, num_classes=num_classes, get_auc=True)
         
-        progress_bar.empty()
-        status_text.empty()
+        progress_container.empty()
         
-        return model, data, {'f1': f1, 'acc': acc, 'prec': prec, 'rec': rec, 'auprc': auprc, 'auroc': auroc}, None
+        # Initialize explainers
+        st.markdown('''
+        <div class="info-box">
+            <h4>Initializing Explainers</h4>
+            <p>Setting up explanation algorithms for comprehensive analysis...</p>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        model.eval()
+        
+        grad_explainer = GradExplainer(model, criterion=F.nll_loss)
+        gnn_explainer = GNNExplainer(model)
+        pgm_explainer = PGMExplainer(model, explain_graph=False)
+        
+        try:
+            lime_explainer = SafeGraphLIME(model)
+            # st.success("SafeGraphLIME initialized successfully")
+        except Exception as lime_init_error:
+            st.warning(f"SafeGraphLIME initialization failed: {lime_init_error}")
+            try:
+                lime_explainer = GraphLIME(model)
+                st.success("Regular GraphLIME initialized as fallback")
+            except Exception as regular_lime_error:
+                st.error(f"Both LIME initialization attempts failed: {regular_lime_error}")
+                raise regular_lime_error
+        
+        st.markdown('''
+        <div class="success-box">
+            <h4>Explainer Initialization Complete</h4>
+            <p>All explanation algorithms are ready for generating interpretable insights.</p>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        return (model, data, {'f1': f1, 'acc': acc, 'prec': prec, 'rec': rec, 'auprc': auprc, 'auroc': auroc}, 
+                grad_explainer, gnn_explainer, pgm_explainer, lime_explainer, None)
         
     except Exception as e:
-        return None, None, None, str(e)
-
-def convert_to_full_explanation(exp, node_idx, subset, sub_edge_index, mapping, edge_mask, data):
-    """Convert explanation from subgraph to full graph"""
-    try:
-        full_node_imp = torch.zeros(data.num_nodes)
-        
-        if hasattr(exp, 'feature_imp') and exp.feature_imp is not None and exp.node_imp is None:
-            if hasattr(exp, 'node_idx'):
-                target_node = exp.node_idx
-                if isinstance(target_node, torch.Tensor):
-                    target_node = target_node.item()
-                mean_imp = exp.feature_imp.mean().item()
-                full_node_imp[target_node] = mean_imp
-        else:
-            if exp.node_imp is not None:
-                for i, imp in enumerate(exp.node_imp):
-                    if i < len(subset):
-                        full_node_imp[subset[i]] = imp
-        
-        full_exp = Explanation(
-            node_imp=full_node_imp,
-            node_idx=node_idx
-        )
-        
-        full_exp.enc_subgraph = EnclosingSubgraph(
-            nodes=subset,
-            edge_index=sub_edge_index,
-            inv=mapping,
-            edge_mask=edge_mask,
-            directed=False
-        )
-        
-        full_exp.node_reference = {}
-        for sub_idx, full_idx in enumerate(subset):
-            full_exp.node_reference[full_idx.item()] = sub_idx
-        
-        return full_exp, None
-    except Exception as e:
-        return None, str(e)
-
-def create_lime_compatible_explanation(lime_exp, node_idx, subset, sub_edge_index, mapping, edge_mask, data):
-    """Create LIME-compatible explanation for evaluation"""
-    try:
-        # Handle feature importance conversion
-        if hasattr(lime_exp, 'feature_imp') and lime_exp.feature_imp is not None:
-            node_importance = lime_exp.feature_imp.mean().item()
-        else:
-            node_importance = 1.0  # Default importance
-        
-        lime_node_importance = torch.zeros(data.num_nodes)
-        lime_node_importance[node_idx] = node_importance
-        
-        # Create node reference
-        node_reference = {i: i for i in range(data.num_nodes)}
-        
-        # Create edge mask
-        edge_mask = torch.zeros(data.edge_index.shape[1], dtype=torch.bool)
-        for edge_id, (src, dst) in enumerate(data.edge_index.T):
-            if src in subset and dst in subset:
-                edge_mask[edge_id] = True
-        
-        class ExplanationCompat(Explanation):
-            def __init__(self, enc_subgraph=None, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                self.enc_subgraph = enc_subgraph
-        
-        lime_compatible = ExplanationCompat(
-            node_imp=lime_node_importance,
-            node_idx=node_idx,
-            enc_subgraph=EnclosingSubgraph(
-                nodes=subset,
-                edge_index=sub_edge_index,
-                inv=mapping,
-                edge_mask=edge_mask,
-                directed=False
-            )
-        )
-        lime_compatible.node_reference = node_reference
-        
-        return lime_compatible, None
-    except Exception as e:
-        return None, str(e)
-
-def validate_data_compatibility(data, model, node_idx):
-    """Validate data compatibility before running explainers"""
-    issues = []
-    
-    # Check node index validity
-    if node_idx >= data.num_nodes:
-        issues.append(f"Node index {node_idx} exceeds available nodes ({data.num_nodes})")
-    
-    # Check data types
-    if data.x.dtype != torch.float32:
-        issues.append(f"Node features have dtype {data.x.dtype}, expected torch.float32")
-    
-    if data.edge_index.dtype != torch.long:
-        issues.append(f"Edge index has dtype {data.edge_index.dtype}, expected torch.long")
-    
-    # Check for NaN or infinite values
-    if torch.isnan(data.x).any():
-        issues.append("Node features contain NaN values")
-    
-    if torch.isinf(data.x).any():
-        issues.append("Node features contain infinite values")
-    
-    # Check graph connectivity
-    if data.edge_index.shape[1] == 0:
-        issues.append("Graph has no edges")
-    
-    return issues
+        return None, None, None, None, None, None, None, str(e)
 
 # Main content
 if run_analysis:
     # Generate dataset
-    with st.spinner("🔄 Generating dataset..."):
-        dataset, dataset_error = generate_dataset(model_layers, num_subgraphs, subgraph_size, prob_connection)
+    with st.spinner("Generating ShapeGGen dataset..."):
+        dataset, data, explanation, dataset_error = generate_dataset(model_layers, num_subgraphs, subgraph_size, prob_connection)
         
         if dataset_error:
-            st.error(f"❌ Dataset generation failed: {dataset_error}")
+            st.markdown(f'''
+            <div class="error-box">
+                <h4>Dataset Generation Failed</h4>
+                <p>{dataset_error}</p>
+            </div>
+            ''', unsafe_allow_html=True)
             st.stop()
-        
-        st.session_state.dataset_generated = True
     
-    # Display dataset info
-    st.markdown('<div class="section-header">📊 Dataset Information</div>', unsafe_allow_html=True)
-    
-    data = dataset.graph
-    explanation = dataset.explanations
-    
+    # Dataset information
+    st.markdown('<h2 class="section-header">Dataset Information</h2>', unsafe_allow_html=True)
+
+    # Metrics cards
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -335,6 +520,7 @@ if run_analysis:
         <div class="metric-card">
             <h3>Nodes</h3>
             <h2>{data.num_nodes}</h2>
+            <p>Graph vertices</p>
         </div>
         ''', unsafe_allow_html=True)
     
@@ -343,6 +529,7 @@ if run_analysis:
         <div class="metric-card">
             <h3>Edges</h3>
             <h2>{data.num_edges}</h2>
+            <p>Graph connections</p>
         </div>
         ''', unsafe_allow_html=True)
     
@@ -351,6 +538,7 @@ if run_analysis:
         <div class="metric-card">
             <h3>Features</h3>
             <h2>{dataset.n_features}</h2>
+            <p>Node attributes</p>
         </div>
         ''', unsafe_allow_html=True)
     
@@ -359,588 +547,608 @@ if run_analysis:
         <div class="metric-card">
             <h3>Classes</h3>
             <h2>{len(torch.unique(data.y))}</h2>
+            <p>Label categories</p>
         </div>
         ''', unsafe_allow_html=True)
     
-    # Train model
-    st.markdown('<div class="section-header">🧠 Model Training</div>', unsafe_allow_html=True)
+    # Model training
+    st.markdown('<h2 class="section-header">Model Training & Explainer Initialization</h2>', unsafe_allow_html=True)
     
-    with st.spinner("🏃‍♂️ Training model..."):
-        model, data, metrics, train_error = train_model(dataset, model_choice, hidden_channels, learning_rate, epochs)
+    with st.spinner("Training model and initializing explainers..."):
+        result = train_model_and_init_explainers(dataset, model_choice, hidden_channels, learning_rate, epochs)
         
-        if train_error:
-            st.error(f"❌ Model training failed: {train_error}")
+        if result[-1] is not None:
+            st.markdown(f'''
+            <div class="error-box">
+                <h4>Training/Initialization Failed</h4>
+                <p>{result[-1]}</p>
+            </div>
+            ''', unsafe_allow_html=True)
             st.stop()
         
-        st.session_state.model_trained = True
+        model, data, metrics, grad_explainer, gnn_explainer, pgm_explainer, lime_explainer, _ = result
     
-    # Display training results
-    st.success("✅ Model training completed!")
+    # Training results with analysis
+    st.markdown('''
+    <div class="success-box">
+        <h4>Model Training Complete</h4>
+        <p>GNN model has been trained and all explainers are ready for analysis.</p>
+    </div>
+    ''', unsafe_allow_html=True)
     
+    # Model performance metrics
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("F1 Score", f"{metrics['f1']:.4f}")
-        st.metric("Accuracy", f"{metrics['acc']:.4f}")
+        st.metric("F1 Score", f"{metrics['f1']:.4f}", delta=f"{(metrics['f1']-0.5):.4f}")
+        st.metric("Accuracy", f"{metrics['acc']:.4f}", delta=f"{(metrics['acc']-0.5):.4f}")
     with col2:
-        st.metric("Precision", f"{metrics['prec']:.4f}")
-        st.metric("Recall", f"{metrics['rec']:.4f}")
+        st.metric("Precision", f"{metrics['prec']:.4f}", delta=f"{(metrics['prec']-0.5):.4f}")
+        st.metric("Recall", f"{metrics['rec']:.4f}", delta=f"{(metrics['rec']-0.5):.4f}")
     with col3:
-        st.metric("AUROC", f"{metrics['auroc']:.4f}")
-        st.metric("AUPRC", f"{metrics['auprc']:.4f}")
+        st.metric("AUROC", f"{metrics['auroc']:.4f}", delta=f"{(metrics['auroc']-0.5):.4f}")
+        st.metric("AUPRC", f"{metrics['auprc']:.4f}", delta=f"{(metrics['auprc']-0.5):.4f}")
     
-    # Generate explanations
-    st.markdown('<div class="section-header">🔍 Explanation Generation</div>', unsafe_allow_html=True)
+    # Model performance analysis
+    performance_analysis = analyze_model_performance(metrics)
+    st.markdown(f'''
+    <div class="analysis-box">
+        <h4>Model Performance Analysis</h4>
+        <ul>
+            {''.join([f"<li>{analysis}</li>" for analysis in performance_analysis])}
+        </ul>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Explanation generation
+    st.markdown('<h2 class="section-header">Explanation Generation</h2>', unsafe_allow_html=True)
     
     # Validate node index
     node_idx = min(node_idx_input, data.num_nodes - 1)
     if node_idx != node_idx_input:
-        st.warning(f"⚠️ Node index adjusted to {node_idx} (max available: {data.num_nodes - 1})")
+        st.markdown(f'''
+        <div class="warning-box">
+            <h4>Node Index Adjustment</h4>
+            <p>Node index adjusted from <strong>{node_idx_input}</strong> to <strong>{node_idx}</strong> (maximum available: {data.num_nodes - 1})</p>
+        </div>
+        ''', unsafe_allow_html=True)
     
-    # Validate data compatibility
-    data_issues = validate_data_compatibility(data, model, node_idx)
-    if data_issues:
-        st.markdown('<div class="warning-box">', unsafe_allow_html=True)
-        st.markdown("⚠️ **Data compatibility issues detected:**")
-        for issue in data_issues:
-            st.markdown(f"- {issue}")
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    with st.spinner("🔬 Generating explanations..."):
+    with st.spinner("Generating explanations..."):
         try:
-            # Initialize device and prepare data
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            data = data.to(device)
-            model = model.to(device)
+            # Data preparation
+            x, edge_index = data.x, data.edge_index
             
-            # Ensure proper data types
-            if data.edge_index.dtype != torch.long:
-                data.edge_index = data.edge_index.long()
-            if data.x.dtype != torch.float32:
-                data.x = data.x.float()
+            st.markdown(f'''
+            <div class="info-box">
+                <h4>Explanation Target</h4>
+                <p>Analyzing importance patterns for <strong>node {node_idx}</strong></p>
+            </div>
+            ''', unsafe_allow_html=True)
             
-            # Clean data (remove NaN/inf values)
-            if torch.isnan(data.x).any() or torch.isinf(data.x).any():
-                st.warning("⚠️ Cleaning NaN/infinite values from node features")
-                data.x = torch.nan_to_num(data.x, nan=0.0, posinf=1.0, neginf=-1.0)
-            
-            edge_index = data.edge_index
-            x = data.x
-            
-            # Set model to evaluation mode (critical for GraphLIME)
-            model.eval()
-            
-            st.info(f"📍 Explaining node {node_idx} in graph with {data.num_nodes} nodes and {data.num_edges} edges")
-            st.info(f"🧠 Model type: {type(model).__name__}, Device: {next(model.parameters()).device}")
-            
-            # Test model output to ensure compatibility
-            try:
-                with torch.no_grad():
-                    test_output = model(x, edge_index)
-                    st.info(f"✅ Model test successful - Output shape: {test_output.shape}")
-            except Exception as model_error:
-                st.error(f"❌ Model compatibility test failed: {model_error}")
-                st.stop()
-            
-            # Get subgraph for gradient-based methods
+            # Subgraph extraction
             subset, sub_edge_index, mapping, edge_mask = k_hop_subgraph(
-                node_idx, num_hops, edge_index, relabel_nodes=True, 
+                node_idx, num_hops, data.edge_index, relabel_nodes=True, 
                 num_nodes=data.num_nodes, flow='source_to_target'
             )
-            sub_x = x[subset]
+            sub_x = data.x[subset]
             sub_node_idx = mapping.item()
             
-            st.info(f"🔍 Subgraph contains {len(subset)} nodes, explaining node {sub_node_idx} (original: {node_idx})")
+            st.markdown(f'''
+            <div class="info-box">
+                <h4>Subgraph Analysis</h4>
+                <p><strong>Subgraph Size:</strong> {len(subset)} nodes | <strong>Target Node in Subgraph:</strong> {sub_node_idx}</p>
+                <p><strong>Original Target:</strong> {node_idx} | <strong>Subgraph Connectivity:</strong> {sub_edge_index.shape[1]} edges</p>
+            </div>
+            ''', unsafe_allow_html=True)
             
-            # Initialize explanations dictionary
-            explanations = {}
-            explanation_errors = {}
-            
-            # Initialize explainers with error handling
-            explainers = {}
-            
-            # GradExplainer
-            if use_grad:
-                try:
-                    explainers['grad'] = GradExplainer(model, criterion=torch.nn.CrossEntropyLoss())
-                    st.success("✅ GradExplainer initialized")
-                except Exception as e:
-                    explanation_errors['grad'] = f"Initialization failed: {str(e)}"
-                    st.error(f"❌ GradExplainer failed to initialize: {e}")
-            
-            # GNNExplainer
-            if use_gnn:
-                try:
-                    explainers['gnn'] = GNNExplainer(model)
-                    st.success("✅ GNNExplainer initialized")
-                except Exception as e:
-                    explanation_errors['gnn'] = f"Initialization failed: {str(e)}"
-                    st.error(f"❌ GNNExplainer failed to initialize: {e}")
-            
-            # PGMExplainer
-            if use_pgm:
-                try:
-                    explainers['pgm'] = PGMExplainer(model, explain_graph=False, p_threshold=0.1)
-                    st.success("✅ PGMExplainer initialized")
-                except Exception as e:
-                    explanation_errors['pgm'] = f"Initialization failed: {str(e)}"
-                    st.error(f"❌ PGMExplainer failed to initialize: {e}")
-            
-            # GraphLIME with enhanced error handling
-            if use_lime:
-                try:
-                    # Initialize GraphLIME exactly like in notebook
-                    explainers['lime'] = GraphLIME(model)
-                    st.success("✅ GraphLIME initialized")
-                except Exception as e:
-                    explanation_errors['lime'] = f"Initialization failed: {str(e)}"
-                    st.error(f"❌ GraphLIME failed to initialize: {e}")
-            
-            # Generate explanations with individual error handling
+            # Progress tracking
+            st.markdown("### Explainer Execution Progress")
             progress_bar = st.progress(0)
-            total_explainers = len(explainers)
-            current_progress = 0
+            status_container = st.empty()
+            
+            explanations = {}
             
             # GradExplainer
-            if 'grad' in explainers:
-                try:
-                    progress_bar.progress(current_progress / total_explainers if total_explainers > 0 else 0)
-                    st.info("🔄 Running GradExplainer...")
-                    explanations['grad'] = explainers['grad'].get_explanation_node(sub_node_idx, sub_x, sub_edge_index)
-                    st.success("✅ GradExplainer completed")
-                    current_progress += 1
-                except Exception as e:
-                    explanation_errors['grad'] = f"Explanation generation failed: {str(e)}"
-                    st.error(f"❌ GradExplainer failed: {e}")
+            progress_bar.progress(0.1)
+            with status_container.container():
+                st.markdown('<span class="explainer-status status-running">Running GradExplainer...</span>', unsafe_allow_html=True)
+            grad_explanation = grad_explainer.get_explanation_node(
+                sub_node_idx, sub_x, sub_edge_index
+            )
+            explanations['grad'] = grad_explanation
+            with status_container.container():
+                st.markdown('<span class="explainer-status status-success">GradExplainer Completed</span>', unsafe_allow_html=True)
             
-            # GNNExplainer
-            if 'gnn' in explainers:
-                try:
-                    progress_bar.progress(current_progress / total_explainers if total_explainers > 0 else 0)
-                    st.info("🔄 Running GNNExplainer...")
-                    explanations['gnn'] = explainers['gnn'].get_explanation_node(sub_node_idx, sub_x, sub_edge_index)
-                    st.success("✅ GNNExplainer completed")
-                    current_progress += 1
-                except Exception as e:
-                    explanation_errors['gnn'] = f"Explanation generation failed: {str(e)}"
-                    st.error(f"❌ GNNExplainer failed: {e}")
+            progress_bar.progress(0.3)
+            with status_container.container():
+                st.markdown('<span class="explainer-status status-running">Running GNNExplainer...</span>', unsafe_allow_html=True)
+            gnn_explanation = gnn_explainer.get_explanation_node(
+                sub_node_idx, sub_x, sub_edge_index
+            )
+            explanations['gnn'] = gnn_explanation
+            with status_container.container():
+                st.markdown('<span class="explainer-status status-success">GNNExplainer Completed</span>', unsafe_allow_html=True)
             
-            # PGMExplainer
-            if 'pgm' in explainers:
-                try:
-                    progress_bar.progress(current_progress / total_explainers if total_explainers > 0 else 0)
-                    st.info("🔄 Running PGMExplainer...")
-                    explanations['pgm'] = explainers['pgm'].get_explanation_node(node_idx, x, edge_index)
-                    st.success("✅ PGMExplainer completed")
-                    current_progress += 1
-                except Exception as e:
-                    explanation_errors['pgm'] = f"Explanation generation failed: {str(e)}"
-                    st.error(f"❌ PGMExplainer failed: {e}")
+            # PGM and GraphLIME use full graph
+            progress_bar.progress(0.5)
+            with status_container.container():
+                st.markdown('<span class="explainer-status status-running">Running PGMExplainer...</span>', unsafe_allow_html=True)
+            pgm_explanation = pgm_explainer.get_explanation_node(
+                node_idx, data.x, data.edge_index
+            )
+            explanations['pgm'] = pgm_explanation
+            with status_container.container():
+                st.markdown('<span class="explainer-status status-success">PGMExplainer Completed</span>', unsafe_allow_html=True)
             
-            # GraphLIME - exactly matching notebook implementation
-            if 'lime' in explainers:
+            progress_bar.progress(0.7)
+            with status_container.container():
+                st.markdown('<span class="explainer-status status-running">Running SafeGraphLIME...</span>', unsafe_allow_html=True)
+            
+            # SafeGraphLIME with multiple fallback approaches
+            try:
+                lime_explanation = lime_explainer.get_explanation_node(
+                    node_idx, data.x, data.edge_index
+                )
+                explanations['lime'] = lime_explanation
+                with status_container.container():
+                    st.markdown('<span class="explainer-status status-success">SafeGraphLIME Completed</span>', unsafe_allow_html=True)
+            except Exception as e1:
+                st.markdown(f'''
+                <div class="warning-box">
+                    <p>Primary approach failed: {e1}</p>
+                </div>
+                ''', unsafe_allow_html=True)
+                
                 try:
-                    progress_bar.progress(current_progress / total_explainers if total_explainers > 0 else 0)
-                    st.info("🔄 Running GraphLIME...")
-                    
-                    # Use the exact same approach as notebook - full graph with original node_idx
-                    explanations['lime'] = explainers['lime'].get_explanation_node(node_idx, x, edge_index)
-                    st.success("✅ GraphLIME completed")
-                    current_progress += 1
-                except Exception as e:
-                    explanation_errors['lime'] = f"Explanation generation failed: {str(e)}"
-                    st.error(f"❌ GraphLIME failed: {e}")
-                    
-                    # Additional debug info for GraphLIME
-                    st.error(f"Debug info - Model type: {type(model)}")
-                    st.error(f"Debug info - Model device: {next(model.parameters()).device}")
-                    st.error(f"Debug info - Data device: {x.device}")
-                    st.error(f"Debug info - Edge index device: {edge_index.device}")
-                    st.error(f"Debug info - Feature shape: {x.shape}")
-                    st.error(f"Debug info - Edge index shape: {edge_index.shape}")
-                    st.error(f"Debug info - Target node: {node_idx}")
-                    
-                    # Try to get more specific error info
+                    with status_container.container():
+                        st.markdown('<span class="explainer-status status-running">Trying alternative parameter order...</span>', unsafe_allow_html=True)
+                    lime_explanation = lime_explainer.get_explanation_node(
+                        node_idx, data.edge_index, data.x
+                    )
+                    explanations['lime'] = lime_explanation
+                    with status_container.container():
+                        st.markdown('<span class="explainer-status status-success">SafeGraphLIME Completed (Alternative approach)</span>', unsafe_allow_html=True)
+                except Exception as e2:
                     try:
-                        with torch.no_grad():
-                            model.eval()
-                            test_output = model(x, edge_index)
-                            st.info(f"Model output shape: {test_output.shape}")
-                            st.info(f"Model output sample: {test_output[0][:5]}")
-                    except Exception as model_test_error:
-                        st.error(f"Model test failed: {model_test_error}")
+                        with status_container.container():
+                            st.markdown('<span class="explainer-status status-running">Trying fresh initialization...</span>', unsafe_allow_html=True)
+                        fresh_lime_explainer = SafeGraphLIME(model)
+                        lime_explanation = fresh_lime_explainer.get_explanation_node(
+                            node_idx, data.x, data.edge_index
+                        )
+                        explanations['lime'] = lime_explanation
+                        with status_container.container():
+                            st.markdown('<span class="explainer-status status-success">SafeGraphLIME Completed (Fresh initialization)</span>', unsafe_allow_html=True)
+                    except Exception as e3:
+                        try:
+                            with status_container.container():
+                                st.markdown('<span class="explainer-status status-running">Trying regular GraphLIME...</span>', unsafe_allow_html=True)
+                            regular_lime = GraphLIME(model)
+                            lime_explanation = regular_lime.get_explanation_node(
+                                node_idx, data.x, data.edge_index
+                            )
+                            explanations['lime'] = lime_explanation
+                            with status_container.container():
+                                st.markdown('<span class="explainer-status status-success">Regular GraphLIME Completed</span>', unsafe_allow_html=True)
+                        except Exception as e4:
+                            st.markdown(f'''
+                            <div class="error-box">
+                                <h4>All LIME Approaches Failed</h4>
+                                <p>Final error: {e4}</p>
+                            </div>
+                            ''', unsafe_allow_html=True)
+            
+            # Convert to uniform format
+            progress_bar.progress(0.9)
+            with status_container.container():
+                st.markdown('<span class="explainer-status status-running">Converting explanations...</span>', unsafe_allow_html=True)
+            
+            grad_full_exp = convert_to_full_explanation(
+                grad_explanation, node_idx, subset, sub_edge_index, mapping, edge_mask, data
+            )
+            gnn_full_exp = convert_to_full_explanation(
+                gnn_explanation, node_idx, subset, sub_edge_index, mapping, edge_mask, data
+            )
+            pgm_full_exp = convert_to_full_explanation(
+                pgm_explanation, node_idx, subset, sub_edge_index, mapping, edge_mask, data
+            )
+            if 'lime' in explanations:
+                lime_full_exp = convert_to_full_explanation(
+                    lime_explanation, node_idx, subset, sub_edge_index, mapping, edge_mask, data
+                )
             
             progress_bar.progress(1.0)
             progress_bar.empty()
+            status_container.empty()
             
-            # Convert successful explanations to full format
-            if 'grad' in explanations:
-                grad_full, grad_error = convert_to_full_explanation(
-                    explanations['grad'], node_idx, subset, sub_edge_index, mapping, edge_mask, data
-                )
-                if grad_error:
-                    st.warning(f"⚠️ GradExplainer conversion failed: {grad_error}")
-                else:
-                    explanations['grad_full'] = grad_full
-            
-            if 'gnn' in explanations:
-                gnn_full, gnn_error = convert_to_full_explanation(
-                    explanations['gnn'], node_idx, subset, sub_edge_index, mapping, edge_mask, data
-                )
-                if gnn_error:
-                    st.warning(f"⚠️ GNNExplainer conversion failed: {gnn_error}")
-                else:
-                    explanations['gnn_full'] = gnn_full
-            
-            # Report results
-            successful_explainers = len([k for k in explanations.keys() if not k.endswith('_full')])
-            failed_explainers = len(explanation_errors)
-            
-            if successful_explainers > 0:
-                st.success(f"✅ Successfully generated {successful_explainers} explanations!")
-            
-            if failed_explainers > 0:
-                st.warning(f"⚠️ {failed_explainers} explainer(s) failed. See details above.")
-                
         except Exception as e:
-            st.error(f"❌ Critical error in explanation generation: {e}")
-            st.info("💡 Try reducing dataset complexity or changing model parameters")
-            st.stop()
-    
-    # Only proceed with evaluation if we have successful explanations
-    if len([k for k in explanations.keys() if not k.endswith('_full')]) > 0:
-        # Evaluation metrics
-        st.markdown('<div class="section-header">📈 Evaluation Metrics</div>', unsafe_allow_html=True)
-        
-        # Ground truth
-        try:
-            ground_truth = dataset.explanations[node_idx][0]
-            st.info("✅ Ground truth explanation loaded successfully")
-        except Exception as e:
-            st.error(f"❌ Failed to load ground truth: {e}")
-            ground_truth = None
-        
-        # Prepare evaluation data
-        eval_results = []
-        
-        # Calculate metrics for successful explainers (only if ground truth is available)
-        if ground_truth is not None:
-            if 'grad' in explanations:
-                try:
-                    gea_grad = graph_exp_acc(ground_truth, explanations['grad'])
-                    gef_grad = graph_exp_faith(explanations['grad'], dataset, model)
-                    eval_results.append(['GradExplainer', gea_grad, gef_grad])
-                except Exception as e:
-                    st.warning(f"⚠️ GradExplainer evaluation failed: {e}")
-            
-            if 'gnn' in explanations:
-                try:
-                    gea_gnn = graph_exp_acc(ground_truth, explanations['gnn'])
-                    gef_gnn = graph_exp_faith(explanations['gnn'], dataset, model)
-                    eval_results.append(['GNNExplainer', gea_gnn, gef_gnn])
-                except Exception as e:
-                    st.warning(f"⚠️ GNNExplainer evaluation failed: {e}")
-            
-            if 'pgm' in explanations:
-                try:
-                    gea_pgm = graph_exp_acc(ground_truth, explanations['pgm'])
-                    gef_pgm = graph_exp_faith(explanations['pgm'], dataset, model)
-                    eval_results.append(['PGMExplainer', gea_pgm, gef_pgm])
-                except Exception as e:
-                    st.warning(f"⚠️ PGMExplainer evaluation failed: {e}")
-            
-            if 'lime' in explanations:
-                try:
-                    # Match the exact notebook implementation for LIME evaluation
-                    lime_explanation = explanations['lime']
-                    
-                    # Convert feature importance GraphLIME to node importance (exactly like notebook)
-                    node_importance = lime_explanation.feature_imp.mean().item()
-                    lime_node_importance = torch.zeros(data.num_nodes)  # For full graph
-                    lime_node_importance[node_idx] = node_importance
-                    
-                    # Create node_reference lengkap untuk full graph (exactly like notebook)
-                    node_reference = {i: i for i in range(data.num_nodes)}
-                    
-                    # Create edge_mask manual (exactly like notebook)
-                    edge_mask = torch.zeros(data.edge_index.shape[1], dtype=torch.bool)
-                    for edge_id, (src, dst) in enumerate(data.edge_index.T):
-                        if src in subset and dst in subset:
-                            edge_mask[edge_id] = True
-                    
-                    # Use the exact same class as in notebook
-                    class ExplanationCompat(Explanation):
-                        def __init__(self, enc_subgraph=None, *args, **kwargs):
-                            super().__init__(*args, **kwargs)
-                            self.enc_subgraph = enc_subgraph
-                    
-                    lime_exp = ExplanationCompat(
-                        node_imp=lime_node_importance,
-                        node_idx=node_idx,
-                        enc_subgraph=EnclosingSubgraph(
-                            nodes=subset,
-                            edge_index=sub_edge_index,
-                            inv=mapping,
-                            edge_mask=edge_mask,
-                            directed=False
-                        )
-                    )
-                    
-                    lime_exp.node_reference = node_reference  # This is the key from notebook!
-                    
-                    gea_lime = graph_exp_acc(ground_truth, lime_exp)
-                    gef_lime = graph_exp_faith(lime_exp, dataset, model)
-                    eval_results.append(['GraphLIME', gea_lime, gef_lime])
-                except Exception as e:
-                    st.warning(f"⚠️ GraphLIME evaluation failed: {e}")
-        
-        # Display metrics table
-        if eval_results:
-            metrics_df = pd.DataFrame(eval_results, columns=[
-                'Explainer', 'Graph Explanation Accuracy', 'Graph Explanation Faithfulness'
-            ])
-            st.dataframe(metrics_df, use_container_width=True)
-            
-            # Summary insights
-            if len(eval_results) > 1:
-                best_gea = metrics_df.loc[metrics_df['Graph Explanation Accuracy'].idxmax()]
-                best_gef = metrics_df.loc[metrics_df['Graph Explanation Faithfulness'].idxmax()]
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown(f'''
-                    <div class="info-box">
-                        <h4>🎯 Best Accuracy</h4>
-                        <p><strong>{best_gea['Explainer']}</strong> achieved the highest Graph Explanation Accuracy with a score of <strong>{best_gea['Graph Explanation Accuracy']:.4f}</strong></p>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                
-                with col2:
-                    st.markdown(f'''
-                    <div class="info-box">
-                        <h4>🔍 Best Faithfulness</h4>
-                        <p><strong>{best_gef['Explainer']}</strong> achieved the highest Graph Explanation Faithfulness with a score of <strong>{best_gef['Graph Explanation Faithfulness']:.4f}</strong></p>
-                    </div>
-                    ''', unsafe_allow_html=True)
-        elif ground_truth is not None:
-            st.warning("⚠️ No successful evaluations to display")
-        else:
-            st.info("ℹ️ Evaluation skipped due to missing ground truth")
-        
-        # Visualizations
-        st.markdown('<div class="section-header">🎨 Explanation Visualizations</div>', unsafe_allow_html=True)
-        
-        # Count available visualizations
-        viz_explanations = []
-        
-        # Check which explanations we can visualize
-        if ground_truth is not None:
-            viz_explanations.append(('Ground Truth', ground_truth))
-        
-        if 'grad_full' in explanations:
-            viz_explanations.append(('GradExplainer', explanations['grad_full']))
-        elif 'grad' in explanations:
-            viz_explanations.append(('GradExplainer', explanations['grad']))
-        
-        if 'gnn_full' in explanations:
-            viz_explanations.append(('GNNExplainer', explanations['gnn_full']))
-        elif 'gnn' in explanations:
-            viz_explanations.append(('GNNExplainer', explanations['gnn']))
-        
-        if 'lime' in explanations:
-            viz_explanations.append(('GraphLIME', explanations['lime']))
-        
-        if 'pgm' in explanations:
-            viz_explanations.append(('PGMExplainer', explanations['pgm']))
-        
-        if len(viz_explanations) > 0:
-            try:
-                num_plots = len(viz_explanations)
-                cols = min(num_plots, 5)  # Maximum 5 columns
-                rows = (num_plots + cols - 1) // cols  # Calculate required rows
-                
-                fig, axes = plt.subplots(rows, cols, figsize=(5*cols, 5*rows))
-                
-                # Ensure axes is always a 2D array
-                if rows == 1 and cols == 1:
-                    axes = [[axes]]
-                elif rows == 1:
-                    axes = [axes]
-                elif cols == 1:
-                    axes = [[ax] for ax in axes]
-                
-                # Create visualizations
-                for idx, (name, exp) in enumerate(viz_explanations):
-                    row = idx // cols
-                    col = idx % cols
-                    ax = axes[row][col]
-                    
-                    try:
-                        # Ensure node_idx is an integer
-                        if hasattr(exp, 'node_idx') and isinstance(exp.node_idx, torch.Tensor):
-                            exp.node_idx = exp.node_idx.item()
-                        
-                        # Create visualization
-                        exp.visualize_node(
-                            num_hops=num_hops,
-                            graph_data=data,
-                            ax=ax,
-                            show_node_labels=True
-                        )
-                        ax.set_title(name, fontsize=14, fontweight='bold')
-                        
-                    except Exception as viz_error:
-                        ax.text(0.5, 0.5, f'{name}\nVisualization Failed\n{str(viz_error)}', 
-                               ha='center', va='center', transform=ax.transAxes, 
-                               bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcoral"))
-                        ax.set_xticks([])
-                        ax.set_yticks([])
-                        st.warning(f"⚠️ {name} visualization failed: {viz_error}")
-                
-                # Hide unused subplots
-                for idx in range(len(viz_explanations), rows * cols):
-                    row = idx // cols
-                    col = idx % cols
-                    axes[row][col].set_visible(False)
-                
-                plt.tight_layout()
-                st.pyplot(fig)
-                
-            except Exception as e:
-                st.error(f"❌ Visualization creation failed: {e}")
-                st.info("💡 Try reducing the number of hops or using a different node index")
-        else:
-            st.warning("⚠️ No explanations available for visualization")
-    
-    else:
-        st.error("❌ No successful explanations generated. Please check the error messages above and try different parameters.")
-        
-        # Show troubleshooting tips
-        st.markdown('''
-        ### 🔧 Troubleshooting Tips:
-        
-        **For GraphLIME tensor dimension errors:**
-        - The error suggests a mismatch between expected and actual tensor dimensions
-        - Try using a simpler model (GCN instead of GAT/GSAGE)
-        - Reduce the number of features or graph complexity
-        - Try a different node index (some nodes may have unusual local structure)
-        
-        **General tips:**
-        - Try reducing the number of subgraphs or subgraph size
-        - Use a different model type (GCN is usually most stable)
-        - Reduce the number of hops (try 1 instead of 2)
-        - Try a different node index
-        - Reduce training epochs if memory is an issue
-        - Disable problematic explainers using the checkboxes in the sidebar
-        ''')
-    
-    # Show error summary if any
-    if explanation_errors:
-        st.markdown('<div class="section-header">⚠️ Error Summary</div>', unsafe_allow_html=True)
-        error_df = pd.DataFrame([
-            {'Explainer': explainer, 'Error': error} 
-            for explainer, error in explanation_errors.items()
-        ])
-        st.dataframe(error_df, use_container_width=True)
-        
-        # Specific help for GraphLIME errors
-        if 'lime' in explanation_errors and 'Sizes of tensors must match' in explanation_errors['lime']:
-            st.markdown('''
-            <div class="warning-box">
-                <h4>🔍 GraphLIME Tensor Dimension Error - Specific Help</h4>
-                <p>The "Sizes of tensors must match except in dimension 1" error in GraphLIME typically occurs due to:</p>
-                <ul>
-                    <li><strong>Feature dimension mismatch:</strong> The model expects different feature dimensions than provided</li>
-                    <li><strong>Model architecture incompatibility:</strong> Some model types (GAT, GSAGE) may have different tensor handling</li>
-                    <li><strong>Graph structure issues:</strong> Isolated nodes or unusual connectivity patterns</li>
-                </ul>
-                <p><strong>Solutions to try:</strong></p>
-                <ul>
-                    <li>Use GCN model (most compatible with GraphLIME)</li>
-                    <li>Try a different node index (avoid isolated or edge nodes)</li>
-                    <li>Reduce graph complexity (fewer subgraphs, smaller subgraph size)</li>
-                    <li>Ensure the selected node has sufficient neighbors</li>
-                </ul>
+            st.markdown(f'''
+            <div class="error-box">
+                <h4>Explanation Generation Failed</h4>
+                <p>{str(e)}</p>
             </div>
             ''', unsafe_allow_html=True)
+            st.stop()
+    
+    st.markdown('''
+    <div class="success-box">
+        <h4>Explanation Generation Complete</h4>
+        <p>Successfully generated explanations for comprehensive analysis.</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Visualization pattern analysis
+    visualization_analysis = analyze_visualization_patterns(explanations, node_idx)
+    st.markdown(f'''
+    <div class="analysis-box">
+        <h4>Explanation Coverage Analysis</h4>
+        <ul>
+            {''.join([f"<li>{analysis}</li>" for analysis in visualization_analysis])}
+        </ul>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Quantitative evaluation
+    st.markdown('<h2 class="section-header">Quantitative Evaluation Metrics</h2>', unsafe_allow_html=True)
+    
+    try:
+        # Ground truth
+        ground_truth = dataset.explanations[node_idx][0]
+        
+        st.markdown('''
+        <div class="success-box">
+            <h4>Ground Truth Loaded</h4>
+            <p>Reference explanation available for quantitative evaluation.</p>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        # Calculate metrics
+        gea_grad = graph_exp_acc(ground_truth, grad_explanation)
+        gea_gnn = graph_exp_acc(ground_truth, gnn_explanation)
+        gea_pgm = graph_exp_acc(ground_truth, pgm_explanation)
+        
+        # Special LIME evaluation
+        if 'lime' in explanations:
+            st.markdown('''
+            <div class="info-box">
+                <h4>LIME Evaluation Processing</h4>
+                <p>Converting LIME feature importance to node importance for evaluation...</p>
+            </div>
+            ''', unsafe_allow_html=True)
+            
+            # Get LIME explanation again
+            lime_explanation = lime_explainer.get_explanation_node(node_idx, x, edge_index)
+            
+            # Convert feature importance to node importance
+            node_importance = lime_explanation.feature_imp.mean().item()
+            lime_node_importance = torch.zeros(data.num_nodes)
+            lime_node_importance[node_idx] = node_importance
+            
+            # Create node reference
+            node_reference = {i: i for i in range(data.num_nodes)}
+            
+            # Create edge mask
+            edge_mask = torch.zeros(data.edge_index.shape[1], dtype=torch.bool)
+            for edge_id, (src, dst) in enumerate(data.edge_index.T):
+                if src in subset and dst in subset:
+                    edge_mask[edge_id] = True
+            
+            # Create ExplanationCompat
+            lime_exp = ExplanationCompat(
+                node_imp=lime_node_importance,
+                node_idx=node_idx,
+                enc_subgraph=EnclosingSubgraph(
+                    nodes=subset,
+                    edge_index=sub_edge_index,
+                    inv=mapping,
+                    edge_mask=edge_mask,
+                    directed=False
+                )
+            )
+            
+            lime_exp.node_reference = node_reference
+            gea_lime = graph_exp_acc(ground_truth, lime_exp)
+            
+            # Calculate faithfulness
+            gef_grad = graph_exp_faith(grad_explanation, dataset, model)
+            gef_gnn = graph_exp_faith(gnn_explanation, dataset, model)
+            gef_pgm = graph_exp_faith(pgm_explanation, dataset, model)
+            gef_lime = graph_exp_faith(lime_exp, dataset, model)
+            
+            # Combined results
+            combined_results = [
+                ['GradExplainer', gea_grad, gef_grad],
+                ['GNNExplainer', gea_gnn, gef_gnn],
+                ['PGMExplainer', gea_pgm, gef_pgm],
+                ['GraphLIME', gea_lime, gef_lime]
+            ]
+        else:
+            # Without LIME
+            gef_grad = graph_exp_faith(grad_explanation, dataset, model)
+            gef_gnn = graph_exp_faith(gnn_explanation, dataset, model)
+            gef_pgm = graph_exp_faith(pgm_explanation, dataset, model)
+            
+            combined_results = [
+                ['GradExplainer', gea_grad, gef_grad],
+                ['GNNExplainer', gea_gnn, gef_gnn],
+                ['PGMExplainer', gea_pgm, gef_pgm]
+            ]
+        
+        # Display results
+        st.markdown("### Quantitative Results Dashboard")
+        
+        combined_df = pd.DataFrame(combined_results, columns=['Explainer', 'Graph Explanation Accuracy (GEA)', 'Graph Explanation Faithfulness (GEF)'])
+        
+        st.dataframe(
+            combined_df, 
+            use_container_width=True,
+            column_config={
+                "Graph Explanation Accuracy (GEA)": st.column_config.ProgressColumn(
+                    "GEA Score",
+                    help="Higher is better",
+                    min_value=0,
+                    max_value=1,
+                    format="%.4f",
+                ),
+                "Graph Explanation Faithfulness (GEF)": st.column_config.ProgressColumn(
+                    "GEF Score", 
+                    help="Higher is better",
+                    min_value=0,
+                    max_value=1,
+                    format="%.4f",
+                ),
+            }
+        )
+        
+        # Best performance insights
+        best_gea = combined_df.loc[combined_df['Graph Explanation Accuracy (GEA)'].idxmax()]
+        best_gef = combined_df.loc[combined_df['Graph Explanation Faithfulness (GEF)'].idxmax()]
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f'''
+            <div class="success-box">
+                <h4>Highest Accuracy</h4>
+                <p><strong>{best_gea['Explainer']}</strong> achieved the best Graph Explanation Accuracy</p>
+                <p><strong>Score:</strong> {best_gea['Graph Explanation Accuracy (GEA)']:.4f}</p>
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f'''
+            <div class="success-box">
+                <h4>Highest Faithfulness</h4>
+                <p><strong>{best_gef['Explainer']}</strong> achieved the best Graph Explanation Faithfulness</p>
+                <p><strong>Score:</strong> {best_gef['Graph Explanation Faithfulness (GEF)']:.4f}</p>
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        # Comprehensive metric analysis
+        metric_analysis = analyze_explanation_metrics(combined_df)
+        st.markdown(f'''
+        <div class="analysis-box">
+            <h4>Explanation Quality Analysis</h4>
+            <ul>
+                {''.join([f"<li>{analysis}</li>" for analysis in metric_analysis])}
+            </ul>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.markdown(f'''
+        <div class="error-box">
+            <h4>Evaluation Failed</h4>
+            <p>{str(e)}</p>
+        </div>
+        ''', unsafe_allow_html=True)
+    
+    # Interactive visualization
+    st.markdown('<h2 class="section-header">Explanation Visualizations</h2>', unsafe_allow_html=True)
+    
+    try:
+        # Ensure node_idx is int
+        if isinstance(node_idx, torch.Tensor):
+            node_idx = node_idx.item()
+        
+        st.markdown(f'''
+        <div class="info-box">
+            <h4>Visualization Overview</h4>
+            <p>Comparative analysis of explanation patterns for <strong>node {node_idx}</strong></p>
+            <p><strong>Layout:</strong> Comprehensive subplot arrangement | <strong>Visualization Scope:</strong> {num_hops}-hop neighborhood</p>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        # Create visualization
+        available_explanations = []
+        if ground_truth:
+            available_explanations.append(('Ground Truth', ground_truth))
+        if 'grad' in explanations:
+            available_explanations.append(('GradExplainer', grad_full_exp))
+        if 'gnn' in explanations:
+            available_explanations.append(('GNNExplainer', gnn_full_exp))
+        if 'lime' in explanations:
+            available_explanations.append(('GraphLIME', lime_explanation))
+        if 'pgm' in explanations:
+            available_explanations.append(('PGMExplainer', pgm_explanation))
+        
+        num_plots = len(available_explanations)
+        fig, ax = plt.subplots(1, num_plots, figsize=(6*num_plots, 6))
+        fig.suptitle(f'Explanation Analysis for Node {node_idx}', 
+                   fontsize=18, fontweight='bold', y=0.98)
+        
+        if num_plots == 1:
+            ax = [ax]
+        
+        # Generate visualizations
+        for idx, (name, exp) in enumerate(available_explanations):
+            if hasattr(exp, 'node_idx') and isinstance(exp.node_idx, torch.Tensor):
+                exp.node_idx = exp.node_idx.item()
+            
+            exp.visualize_node(
+                num_hops=2,
+                graph_data=data,
+                ax=ax[idx],
+                show_node_labels=True
+            )
+            ax[idx].set_title(name, fontsize=14, fontweight='bold', pad=20)
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        # Visualization insights
+        st.markdown(f'''
+        <div class="analysis-box">
+            <h4>Visualization Pattern Analysis</h4>
+            <ul>
+                <li><strong>Method Coverage:</strong> Successfully visualized {num_plots} explanation methods for comprehensive comparison</li>
+                <li><strong>Node Importance Patterns:</strong> Each visualization highlights different aspects of node importance based on the underlying algorithm</li>
+                <li><strong>Consensus Analysis:</strong> Areas of agreement across multiple methods indicate robust importance assignments</li>
+                <li><strong>Method Divergence:</strong> Differences between methods reveal distinct perspectives on feature importance and decision boundaries</li>
+                <li><strong>Ground Truth Comparison:</strong> {'Visual comparison with ground truth enables validation of explanation accuracy' if ground_truth else 'Ground truth not available for direct visual validation'}</li>
+            </ul>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.markdown(f'''
+        <div class="error-box">
+            <h4>Visualization Generation Failed</h4>
+            <p>{str(e)}</p>
+        </div>
+        ''', unsafe_allow_html=True)
 
 else:
     # Welcome screen
     st.markdown('''
     <div class="info-box">
-        <h2>Welcome to GraphXAI Explainer Dashboard! 🚀</h2>
-        <p>This interactive dashboard allows you to:</p>
-        <ul>
-            <li>🔧 Configure dataset and model parameters</li>
-            <li>🤖 Train different GNN models (GCN, GIN, GAT, GSAGE)</li>
-            <li>🔍 Generate explanations using multiple explainer methods</li>
-            <li>📊 Compare explanation quality metrics</li>
-            <li>🎨 Visualize and compare explanations</li>
-        </ul>
-        <p><strong>Configure your parameters in the sidebar and click "Run Analysis" to get started!</strong></p>
+        <h2 class="highlight-text">Welcome to the GraphXAI Explainer Dashboard</h2>
+        <p>This comprehensive dashboard provides advanced graph neural network explanation capabilities with detailed analysis:</p>
     </div>
     ''', unsafe_allow_html=True)
     
-    # Show some example configurations
-    st.markdown("### 💡 Suggested Configurations")
-    
-    col1, col2, col3 = st.columns(3)
+    # Feature highlights
+    col1, col2 = st.columns(2)
     
     with col1:
         st.markdown('''
-        **🚀 Quick Start (Most Stable)**
-        - Model Layers: 3
-        - Subgraphs: 6
-        - Subgraph Size: 4
-        - Model: GCN
-        - Epochs: 200
-        - Node Index: 8
-        ''')
+        <div class="success-box">
+            <h4>Core Features</h4>
+            <ul>
+                <li><strong>Interactive Configuration</strong> - Customize all parameters</li>
+                <li><strong>Multiple GNN Models</strong> - GCN, GIN, GAT, GSAGE support</li>
+                <li><strong>Four Explainer Methods</strong> - Comprehensive explanation coverage</li>
+                <li><strong>Quantitative Evaluation</strong> - Accuracy and faithfulness metrics</li>
+                <li><strong>Rich Visualizations</strong> - Interactive explanation displays</li>
+            </ul>
+        </div>
+        ''', unsafe_allow_html=True)
     
     with col2:
         st.markdown('''
-        **🎯 High Performance**
-        - Model Layers: 4
-        - Subgraphs: 10
-        - Subgraph Size: 6
-        - Model: GAT
-        - Epochs: 350
-        - Node Index: 15
-        ''')
+        <div class="info-box">
+            <h4>Supported Explainers</h4>
+            <ul>
+                <li><strong>GradExplainer</strong> - Gradient-based attribution</li>
+                <li><strong>GNNExplainer</strong> - Mutual information approach</li>
+                <li><strong>PGMExplainer</strong> - Probabilistic graphical models</li>
+                <li><strong>GraphLIME</strong> - Local surrogate explanations</li>
+            </ul>
+        </div>
+        ''', unsafe_allow_html=True)
     
-    with col3:
+    # Configuration suggestions
+    st.markdown('<h2 class="section-header">Recommended Configurations</h2>', unsafe_allow_html=True)
+    
+    config_col1, config_col2, config_col3 = st.columns(3)
+    
+    with config_col1:
         st.markdown('''
-        **⚡ Fast Testing**
-        - Model Layers: 2
-        - Subgraphs: 4
-        - Subgraph Size: 3
-        - Model: GIN
-        - Epochs: 100
-        - Node Index: 5
-        ''')
+        <div class="metric-card">
+            <h3>Quick Start</h3>
+            <p><strong>Stable Configuration</strong></p>
+            <ul style="text-align: left; margin-top: 1rem;">
+                <li>Model: GCN</li>
+                <li>Layers: 3</li>
+                <li>Subgraphs: 8</li>
+                <li>Size: 5</li>
+                <li>Epochs: 300</li>
+                <li>Node: 8</li>
+            </ul>
+        </div>
+        ''', unsafe_allow_html=True)
     
-    # Important notes about GraphLIME
+    with config_col2:
+        st.markdown('''
+        <div class="metric-card">
+            <h3>High Performance</h3>
+            <p><strong>Advanced Analysis</strong></p>
+            <ul style="text-align: left; margin-top: 1rem;">
+                <li>Model: GAT</li>
+                <li>Layers: 4</li>
+                <li>Subgraphs: 10</li>
+                <li>Size: 6</li>
+                <li>Epochs: 400</li>
+                <li>Node: 15</li>
+            </ul>
+        </div>
+        ''', unsafe_allow_html=True)
+    
+    with config_col3:
+        st.markdown('''
+        <div class="metric-card">
+            <h3>Fast Testing</h3>
+            <p><strong>Quick Experiments</strong></p>
+            <ul style="text-align: left; margin-top: 1rem;">
+                <li>Model: GIN</li>
+                <li>Layers: 2</li>
+                <li>Subgraphs: 4</li>
+                <li>Size: 5</li>
+                <li>Epochs: 100</li>
+                <li>Node: 5</li>
+            </ul>
+        </div>
+        ''', unsafe_allow_html=True)
+    
+    # Technical implementation
+    st.markdown('<h2 class="section-header">Technical Implementation</h2>', unsafe_allow_html=True)
+    
     st.markdown('''
-    ### 🔍 Important Notes for GraphLIME
-    
-    GraphLIME can be sensitive to certain configurations. If you encounter tensor dimension errors:
-    
-    - **Use GCN model** - Most compatible with GraphLIME
-    - **Start with smaller graphs** - Fewer subgraphs and smaller subgraph size
-    - **Choose central nodes** - Avoid nodes at the edge of the graph
-    - **Use the explainer checkboxes** - Disable problematic explainers if needed
-    
-    The dashboard includes multiple fallback strategies for GraphLIME and will attempt different approaches automatically.
-    ''')
+    <div class="dataset-info">
+        <h4 class="highlight-text">Advanced Features</h4>
+        <ul>
+            <li><strong>Automated Data Validation:</strong> Comprehensive compatibility checking</li>
+            <li><strong>Intelligent Error Handling:</strong> Graceful degradation and detailed diagnostics</li>
+            <li><strong>Real-time Progress Tracking:</strong> Live updates during training and explanation</li>
+            <li><strong>Interactive Visualizations:</strong> Rich, comparative explanation displays</li>
+            <li><strong>Quantitative Metrics:</strong> Standardized evaluation with GEA and GEF scores</li>
+            <li><strong>Comprehensive Analysis:</strong> Automated interpretation of results and patterns</li>
+        </ul>
+    </div>
+    ''', unsafe_allow_html=True)
     
     # System information
-    st.markdown("### 🖥️ System Information")
-    device_info = "CUDA" if torch.cuda.is_available() else "CPU"
-    st.info(f"Running on: **{device_info}**")
+    st.markdown('<h2 class="section-header">System Environment</h2>', unsafe_allow_html=True)
     
-    if torch.cuda.is_available():
-        st.info(f"GPU: {torch.cuda.get_device_name(0)}")
-        st.info(f"CUDA Version: {torch.version.cuda}")
+    device_info = "CUDA GPU" if torch.cuda.is_available() else "CPU"
     
-    st.info(f"PyTorch Version: {torch.__version__}")
-    st.info("📝 This dashboard automatically handles data validation, tensor compatibility, and provides detailed error reporting.")
+    sys_col1, sys_col2 = st.columns(2)
+    
+    with sys_col1:
+        st.markdown(f'''
+        <div class="info-box">
+            <h4>Compute Environment</h4>
+            <p><strong>Device:</strong> {device_info}</p>
+            <p><strong>PyTorch Version:</strong> {torch.__version__}</p>
+            {'<p><strong>GPU:</strong> ' + torch.cuda.get_device_name(0) + '</p>' if torch.cuda.is_available() else ''}
+            {'<p><strong>CUDA Version:</strong> ' + str(torch.version.cuda) + '</p>' if torch.cuda.is_available() else ''}
+        </div>
+        ''', unsafe_allow_html=True)
+    
+    # Call to action
+    st.markdown('''
+    <div class="success-box">
+        <h4>Ready to Start?</h4>
+        <p>Configure your parameters in the sidebar and click <strong>"Run Complete Analysis"</strong> to begin!</p>
+        <p>The dashboard will guide you through dataset generation, model training, explanation generation, and comprehensive evaluation with detailed analysis.</p>
+    </div>
+    ''', unsafe_allow_html=True)
