@@ -16,7 +16,6 @@ from graphxai.gnn_models.node_classification.testing import (
 )
 from torch_geometric.data import Data
 import matplotlib.pyplot as plt
-import io
 
 # === Streamlit Setup ===
 st.title('Graph Neural Network Model Dashboard')
@@ -118,6 +117,35 @@ if uploaded_file is not None:
         with torch.no_grad():
             out = model(x, edge_index)
             pred = out.argmax(dim=1)
+
+            # === Menyimpan node hasil prediksi
+            buy_nodes = test_idx[(pred[test_idx] == 1)]
+            not_buy_nodes = test_idx[(pred[test_idx] == 0)]
+
+            # Tampilkan jumlah masing-masing
+            st.write(f"🔍 Jumlah node yang direkomendasikan untuk beli (Buy): {len(buy_nodes)}")
+            st.write(f"🧩 Jumlah node yang tidak direkomendasikan untuk beli (Not Buy): {len(not_buy_nodes)}")
+
+            # Jika ingin melihat ID node-nya:
+            st.write("Contoh node rekomendasi (Buy):", buy_nodes[:10].cpu().numpy())
+            st.write("Contoh node bukan rekomendasi (Not Buy):", not_buy_nodes[:10].cpu().numpy())
+
+            # Simpan ke CSV
+            buy_node_list = buy_nodes.cpu().numpy()
+            not_buy_node_list = not_buy_nodes.cpu().numpy()
+            df_buy = pd.DataFrame({'Node_ID': buy_node_list, 'Predicted_Label': 1})
+            df_not_buy = pd.DataFrame({'Node_ID': not_buy_node_list, 'Predicted_Label': 0})
+
+            recommendation_df = pd.concat([df_buy, df_not_buy], ignore_index=True)
+            recommendation_df.to_csv(f"{model_choice}_recommendation_results.csv", index=False)
+            st.write("📁 Hasil prediksi per node disimpan di:", f"{model_choice}_recommendation_results.csv")
+
+            true_buy = test_idx[(pred[test_idx] == 1) & (y[test_idx] == 1)]
+            false_buy = test_idx[(pred[test_idx] == 1) & (y[test_idx] == 0)]
+
+            st.write(f"✅ Benar direkomendasikan Buy: {len(true_buy)}")
+            st.write(f"❌ Salah direkomendasikan Buy: {len(false_buy)}")
+
             y_true = y[test_idx].cpu().numpy()
             y_pred = pred[test_idx].cpu().numpy()
             y_proba = out[test_idx][:, 1].sigmoid().cpu().numpy() if out.size(1) > 1 else out[test_idx].cpu().numpy()
@@ -141,17 +169,32 @@ if uploaded_file is not None:
         subset, sub_edge_index, mapping, _ = k_hop_subgraph(node_idx=node_to_explain, num_hops=1, edge_index=edge_index, relabel_nodes=True, num_nodes=data.num_nodes)
         sub_x = x[subset]
 
-        def graph_exp_faith(exp, data):
-            if exp.node_imp is None:
+        def evaluate_graph_faithfulness(explanation: Explanation, model: torch.nn.Module, data: Data, top_k=0.25) -> float:
+            try:
+                # Untuk node-level explainer
+                from torch.nn import functional as F
+
+                # Hitung softmax output awal
+                with torch.no_grad():
+                    original_out = model(data.x, data.edge_index)
+                    original_softmax = F.softmax(original_out[explanation.node_idx], dim=-1)
+
+                    # Buat salinan fitur, lalu mask node yang tidak penting
+                    pert_x = data.x.clone()
+                    node_imp = explanation.node_imp.clone()
+                    top_k_nodes = node_imp.topk(int(len(node_imp) * top_k)).indices
+                    all_nodes = torch.arange(data.x.shape[0])
+                    unimportant_nodes = list(set(all_nodes.tolist()) - set(top_k_nodes.tolist()))
+
+                    pert_x[unimportant_nodes] = 0.0  # masking unimportant nodes
+                    perturbed_out = model(pert_x, data.edge_index)
+                    perturbed_softmax = F.softmax(perturbed_out[explanation.node_idx], dim=-1)
+
+                    # KL-divergence sebagai metrik fidelity
+                    GEF = 1 - torch.exp(-F.kl_div(original_softmax.log(), perturbed_softmax, reduction='sum')).item()
+                return GEF
+            except Exception as e:
                 return 0.0
-            k = int(len(exp.node_imp) * 0.25)
-            top_nodes = exp.node_imp.topk(k).indices
-            mask_x = data.x.clone()
-            zero_nodes = list(set(range(data.x.shape[0])) - set(top_nodes.tolist()))
-            mask_x[zero_nodes] = 0
-            out_original = model(data.x, edge_index)[exp.node_idx]
-            out_masked = model(mask_x, edge_index)[exp.node_idx]
-            return 1 - torch.norm(out_original - out_masked, p=1).item()
 
         explainers = {
             'GradExplainer': GradExplainer,
@@ -199,6 +242,8 @@ if uploaded_file is not None:
 
                 # Correcting the visualize_node call
                 fig, ax = plt.subplots(figsize=(8, 8))
+                st.write(f"{name} node importance values:")
+                st.write(exp.node_imp)
                 explanation.visualize_node(
                     num_hops=1,  # specify the number of hops for visualization
                     graph_data=sub_data,
@@ -208,11 +253,11 @@ if uploaded_file is not None:
                     node_agg_method='sum',
                     show_node_labels=True,
                     show=True,
-                    norm_imps=True
+                    norm_imps=False
                 )
                 st.pyplot(fig)  # Display the figure in Streamlit
 
-                gef = graph_exp_faith(explanation, data)
+                gef = evaluate_graph_faithfulness(explanation, model, data)
                 results[name] = {'GEF': gef}
                 torch.cuda.empty_cache()
             except Exception as e:
